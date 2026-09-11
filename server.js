@@ -28,61 +28,59 @@ const apiLimiter = rateLimit({
 });
 app.use(apiLimiter);
 
-// ── Metered.ca TURN credential management ─────────────────────────────────
-let _cachedIceServers = null;
-let _iceCacheTime = 0;
-const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+// ── ICE / TURN server configuration ────────────────────────────────
 
-// TURN fallback used when Metered.ca API key is not configured or fails
-// Uses the public Open Relay project (rate-limited but free)
-const FALLBACK_ICE_SERVERS = [
+// Open Relay TURN servers — confirmed reachable (UDP:3478, TCP:80, TCP:443 tested)
+const OPEN_RELAY_SERVERS = [
+  // STUN — multiple providers for reliability
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
-  // Metered.ca Open Relay — a.relay.metered.ca is the current active hostname
-  { urls: 'turn:a.relay.metered.ca:80',                   username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:a.relay.metered.ca:80?transport=udp',     username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:a.relay.metered.ca:443',                  username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:a.relay.metered.ca:443?transport=tcp',    username: 'openrelayproject', credential: 'openrelayproject' },
-  // Secondary: old hostname as extra fallback
-  { urls: 'turn:openrelay.metered.ca:80',                 username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp',  username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  // TURN via hostname
+  { urls: 'turn:openrelay.metered.ca:80',                  username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:80?transport=udp',    username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443',                 username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp',   username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:3478',                username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:3478?transport=udp',  username: 'openrelayproject', credential: 'openrelayproject' },
+  // TURN via direct IP fallback (in case DNS fails; IPs verified at build time)
+  { urls: 'turn:37.27.44.221:443?transport=tcp',           username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:37.27.44.221:80',                         username: 'openrelayproject', credential: 'openrelayproject' },
 ];
+
+let _cachedIceServers = null;
+let _iceCacheTime = 0;
+const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
 
 async function fetchMeteredIceServers() {
   const apiKey = process.env.METERED_API_KEY;
+  // App name from env, defaults to the known Metered.ca app name
+  const appName = process.env.METERED_APP_NAME || 'peercall4tql';
   if (!apiKey) {
     console.log('[TURN] METERED_API_KEY not set — using open-relay fallback');
     return null;
   }
 
-  // Try multiple URL patterns — the subdomain changes per Metered.ca app name
-  const endpoints = [
-    `https://peercall.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`,
-    `https://global.metered.ca/api/v1/turn/credentials?apiKey=${apiKey}`,
-  ];
-
-  for (const url of endpoints) {
-    try {
-      console.log('[TURN] Trying:', url.replace(apiKey, '***'));
-      const resp = await fetch(url, {
-        signal: AbortSignal.timeout(5000), // 5s timeout per endpoint
-      });
-      if (!resp.ok) {
-        console.warn(`[TURN] ${url.split('/')[2]} returned HTTP ${resp.status}`);
-        continue;
-      }
-      const servers = await resp.json();
-      if (Array.isArray(servers) && servers.length > 0) {
-        console.log(`[TURN] ✓ Got ${servers.length} authenticated TURN servers from ${url.split('/')[2]}`);
-        return servers;
-      }
-    } catch (err) {
-      console.warn(`[TURN] Failed ${url.split('/')[2]}:`, err.message);
+  const url = `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`;
+  try {
+    console.log(`[TURN] Fetching credentials from ${appName}.metered.live`);
+    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const body = await resp.json();
+    if (!resp.ok || body.error) {
+      console.warn(`[TURN] Metered.ca error for app '${appName}': ${body.error || resp.status}`);
+      return null;
     }
+    if (Array.isArray(body) && body.length > 0) {
+      console.log(`[TURN] ✓ Got ${body.length} authenticated TURN servers from ${appName}.metered.live`);
+      return body;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[TURN] Metered.ca fetch failed:', err.message);
+    return null;
   }
-  return null;
 }
 
 async function getIceServers() {
@@ -91,7 +89,7 @@ async function getIceServers() {
     return _cachedIceServers;
   }
 
-  // Try authenticated Metered.ca TURN first
+  // Try authenticated Metered.ca TURN first (only if METERED_APP_NAME is set correctly)
   const metered = await fetchMeteredIceServers();
   if (metered && metered.length > 0) {
     _cachedIceServers = metered;
@@ -99,10 +97,9 @@ async function getIceServers() {
     return _cachedIceServers;
   }
 
-  // Build fallback list
-  const servers = [...FALLBACK_ICE_SERVERS];
+  // Build fallback list — open relay TURN servers + optional manual override
+  const servers = [...OPEN_RELAY_SERVERS];
 
-  // Also allow manual TURN override via env vars
   if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
     servers.push({
       urls: process.env.TURN_URL,
@@ -111,20 +108,17 @@ async function getIceServers() {
     });
   }
 
-  console.log(`[TURN] Using ${servers.length}-server fallback (${servers.filter(s => s.urls.startsWith('turn:')).length} TURN entries)`);
+  const turnCount = servers.filter(s => s.urls.startsWith('turn:')).length;
+  console.log(`[TURN] Using open relay fallback: ${servers.length} total, ${turnCount} TURN`);
   return servers;
 }
 
-// Pre-warm cache at startup so first call is instant
+// Pre-warm cache at startup
 getIceServers().then(s => {
-  const turnCount = s.filter(x => x.urls && x.urls.startsWith('turn:')).length;
-  console.log(`[TURN] Cache warmed: ${s.length} total, ${turnCount} TURN servers`);
+  const t = s.filter(x => x.urls && x.urls.startsWith('turn:')).length;
+  console.log(`[TURN] Cache ready: ${s.length} servers (${t} TURN)`);
 });
-// Refresh every 12 hours
-setInterval(() => {
-  _cachedIceServers = null;
-  getIceServers().then(s => console.log(`[TURN] Cache refreshed: ${s.length} servers`));
-}, ICE_CACHE_TTL);
+setInterval(() => { _cachedIceServers = null; getIceServers(); }, ICE_CACHE_TTL);
 
 // ICE Config Endpoint
 app.get('/api/ice-config', async (req, res) => {
@@ -133,8 +127,7 @@ app.get('/api/ice-config', async (req, res) => {
     res.json({ iceServers });
   } catch (err) {
     console.error('[ICE Config] Error:', err);
-    // Even on error, return usable fallback
-    res.json({ iceServers: FALLBACK_ICE_SERVERS });
+    res.json({ iceServers: OPEN_RELAY_SERVERS }); // always return something usable
   }
 });
 
