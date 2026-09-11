@@ -18,7 +18,9 @@ const state = {
   joinCountdownInterval: null,
   creatorCountdownInterval: null,
   iceCandidateQueue: [],
-  isRemoteDescriptionSet: false
+  isRemoteDescriptionSet: false,
+  peerConnectionPromise: null,
+  iceRestartAttempted: false
 };
 
 /* ==========================================================================
@@ -90,16 +92,17 @@ function initSocket() {
   });
 
   // Join approved — both parties
-  state.socket.on('join-approved', () => {
+  state.socket.on('join-approved', async () => {
     hideJoinPrompt();
     clearInterval(state.joinCountdownInterval);
     showCallView();
     if (state.isCreator) {
-      // Creator initiates the WebRTC offer
-      createPeerConnection().then(() => createOffer());
+      // Await ensures RTCPeerConnection is fully ready before offer is sent
+      await createPeerConnection();
+      createOffer();
     } else {
-      // Joiner creates peer connection and waits for the offer
-      createPeerConnection();
+      // Joiner must fully initialise BEFORE the offer can arrive over the socket
+      await createPeerConnection();
     }
   });
 
@@ -380,73 +383,105 @@ function toggleCamera() {
 /* ==========================================================================
    7. WebRTC Management
    ========================================================================== */
-async function createPeerConnection() {
-  const iceServers = await Config.fetchIceServers();
+function createPeerConnection() {
+  // Return the in-flight or already-resolved promise so we never create two PCs
+  if (state.peerConnectionPromise) return state.peerConnectionPromise;
 
-  state.peerConnection = new RTCPeerConnection({ iceServers });
-  state.isRemoteDescriptionSet = false;
-  state.iceCandidateQueue = [];
+  state.peerConnectionPromise = (async () => {
+    const iceServers = await Config.fetchIceServers();
 
-  // Send ICE candidates to the peer
-  state.peerConnection.onicecandidate = (event) => {
-    if (event.candidate && state.socket) {
-      state.socket.emit('ice-candidate', { candidate: event.candidate });
+    state.peerConnection = new RTCPeerConnection({ iceServers });
+    state.isRemoteDescriptionSet = false;
+    state.iceCandidateQueue = [];
+
+    // Send ICE candidates to the peer
+    state.peerConnection.onicecandidate = (event) => {
+      if (event.candidate && state.socket) {
+        state.socket.emit('ice-candidate', { candidate: event.candidate });
+      }
+    };
+
+    // Receive remote tracks (handle both stream and track events)
+    state.peerConnection.ontrack = (event) => {
+      console.log('[WebRTC] Remote track received:', event.track.kind);
+      if (event.streams && event.streams[0]) {
+        state.remoteStream = event.streams[0];
+      } else {
+        if (!state.remoteStream) state.remoteStream = new MediaStream();
+        state.remoteStream.addTrack(event.track);
+      }
+      if (dom.remoteVideo) {
+        dom.remoteVideo.srcObject = state.remoteStream;
+        dom.remoteVideo.muted = false;
+        dom.remoteVideo.play().catch(e => console.warn('[WebRTC] Remote play error:', e));
+      }
+      if (dom.remotePlaceholder) dom.remotePlaceholder.style.display = 'none';
+    };
+
+    // ICE connection state — with auto-restart on failure
+    state.peerConnection.oniceconnectionstatechange = () => {
+      if (!state.peerConnection) return;
+      const iceState = state.peerConnection.iceConnectionState;
+      console.log('[WebRTC] ICE state:', iceState);
+      switch (iceState) {
+        case 'new':
+        case 'checking':
+          updateConnectionStatus('checking', 'Connecting...');
+          break;
+        case 'connected':
+        case 'completed':
+          state.iceRestartAttempted = false;
+          updateConnectionStatus('connected', 'Connected');
+          break;
+        case 'disconnected':
+          updateConnectionStatus('disconnected', 'Reconnecting...');
+          showToast('Connection interrupted. Attempting to reconnect...', 'warning');
+          break;
+        case 'failed':
+          updateConnectionStatus('failed', 'Connection failed');
+          if (state.isCreator && !state.iceRestartAttempted && state.peerConnection) {
+            state.iceRestartAttempted = true;
+            showToast('ICE failed — restarting...', 'warning');
+            console.log('[WebRTC] Attempting ICE restart');
+            setTimeout(() => createOffer({ iceRestart: true }), 500);
+          } else {
+            showToast('Could not establish connection. Check your network.', 'error');
+          }
+          break;
+        case 'closed':
+          break;
+      }
+    };
+
+    // Overall connection state (more reliable signal for 'connected')
+    state.peerConnection.onconnectionstatechange = () => {
+      if (!state.peerConnection) return;
+      const s = state.peerConnection.connectionState;
+      console.log('[WebRTC] Connection state:', s);
+      if (s === 'connected') updateConnectionStatus('connected', 'Connected');
+      else if (s === 'failed') updateConnectionStatus('failed', 'Connection failed');
+    };
+
+    // Add local tracks
+    if (state.localStream) {
+      state.localStream.getTracks().forEach(track => {
+        state.peerConnection.addTrack(track, state.localStream);
+      });
     }
-  };
 
-  // Receive remote tracks
-  state.peerConnection.ontrack = (event) => {
-    state.remoteStream = event.streams[0];
-    if (dom.remoteVideo) {
-      dom.remoteVideo.srcObject = state.remoteStream;
-    }
-    if (dom.remotePlaceholder) {
-      dom.remotePlaceholder.style.display = 'none';
-    }
-  };
+    console.log('[WebRTC] PeerConnection ready');
+  })();
 
-  // Monitor connection state
-  state.peerConnection.oniceconnectionstatechange = () => {
-    if (!state.peerConnection) return;
-    const iceState = state.peerConnection.iceConnectionState;
-    console.log('[WebRTC] ICE Connection State:', iceState);
-
-    switch (iceState) {
-      case 'new':
-      case 'checking':
-        updateConnectionStatus('checking', 'Connecting...');
-        break;
-      case 'connected':
-      case 'completed':
-        updateConnectionStatus('connected', 'Connected');
-        break;
-      case 'disconnected':
-        updateConnectionStatus('disconnected', 'Reconnecting...');
-        showToast('Connection interrupted. Attempting to reconnect...', 'warning');
-        break;
-      case 'failed':
-        updateConnectionStatus('failed', 'Connection failed');
-        showToast('Could not establish connection. Check your network.', 'error');
-        break;
-      case 'closed':
-        break;
-    }
-  };
-
-  // Add local tracks to the connection
-  if (state.localStream) {
-    state.localStream.getTracks().forEach(track => {
-      state.peerConnection.addTrack(track, state.localStream);
-    });
-  }
+  return state.peerConnectionPromise;
 }
 
-async function createOffer() {
+async function createOffer(opts = {}) {
   if (!state.peerConnection) return;
   try {
     const offer = await state.peerConnection.createOffer({
       offerToReceiveAudio: true,
-      offerToReceiveVideo: true
+      offerToReceiveVideo: true,
+      ...opts
     });
     await state.peerConnection.setLocalDescription(offer);
     if (state.socket) {
@@ -459,8 +494,16 @@ async function createOffer() {
 }
 
 async function handleOffer(sdp) {
-  if (!state.peerConnection) {
+  // Await the in-flight createPeerConnection promise to avoid acting on a null PC
+  if (state.peerConnectionPromise) {
+    await state.peerConnectionPromise;
+  } else {
     await createPeerConnection();
+  }
+
+  if (!state.peerConnection) {
+    console.error('[WebRTC] handleOffer: peerConnection null after setup');
+    return;
   }
 
   try {
@@ -519,12 +562,17 @@ function cleanupWebRTC() {
     state.peerConnection.onicecandidate = null;
     state.peerConnection.ontrack = null;
     state.peerConnection.oniceconnectionstatechange = null;
+    state.peerConnection.onconnectionstatechange = null;
     state.peerConnection.close();
     state.peerConnection = null;
   }
+  state.peerConnectionPromise = null;
   state.isRemoteDescriptionSet = false;
   state.iceCandidateQueue = [];
   state.remoteStream = null;
+  state.iceRestartAttempted = false;
+  // Reset ICE server cache so next call gets fresh credentials
+  Config._iceServersPromise = null;
   if (dom.remotePlaceholder) dom.remotePlaceholder.style.display = 'flex';
 }
 

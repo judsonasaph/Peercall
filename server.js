@@ -28,23 +28,74 @@ const apiLimiter = rateLimit({
 });
 app.use(apiLimiter);
 
-// ICE Config Endpoint
-app.get('/api/ice-config', (req, res) => {
-  const iceServers = [
+// ── Metered.ca TURN credential management ─────────────────────────────────
+let _cachedIceServers = null;
+let _iceCacheTime = 0;
+const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours (credentials valid 24h)
+
+async function fetchMeteredIceServers() {
+  const apiKey = process.env.METERED_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const url = `https://peercall.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Metered API responded ${resp.status}`);
+    const servers = await resp.json();
+    console.log(`[TURN] Fetched ${servers.length} ICE servers from Metered.ca`);
+    return servers;
+  } catch (err) {
+    console.error('[TURN] Failed to fetch Metered.ca credentials:', err.message);
+    return null;
+  }
+}
+
+async function getIceServers() {
+  const now = Date.now();
+  if (_cachedIceServers && (now - _iceCacheTime) < ICE_CACHE_TTL) {
+    return _cachedIceServers;
+  }
+  const metered = await fetchMeteredIceServers();
+  if (metered && metered.length > 0) {
+    _cachedIceServers = metered;
+    _iceCacheTime = now;
+    return _cachedIceServers;
+  }
+  // Fallback: standard STUN + manual TURN env vars
+  const fallback = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
   ];
-
   if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
-    iceServers.push({
+    fallback.push({
       urls: process.env.TURN_URL,
       username: process.env.TURN_USERNAME,
       credential: process.env.TURN_CREDENTIAL
     });
   }
+  return fallback;
+}
 
-  res.json({ iceServers });
+// Pre-warm the cache at startup
+getIceServers().then(s => console.log(`[TURN] ICE server cache warmed with ${s.length} entries`));
+// Refresh every 12 hours
+setInterval(() => {
+  _cachedIceServers = null;
+  getIceServers().then(s => console.log(`[TURN] ICE server cache refreshed with ${s.length} entries`));
+}, ICE_CACHE_TTL);
+
+// ICE Config Endpoint
+app.get('/api/ice-config', async (req, res) => {
+  try {
+    const iceServers = await getIceServers();
+    res.json({ iceServers });
+  } catch (err) {
+    console.error('[ICE Config] Error:', err);
+    res.status(500).json({ error: 'Could not fetch ICE configuration' });
+  }
 });
+
 
 // 3. In-memory room store
 const rooms = new Map();
