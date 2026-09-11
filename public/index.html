@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PeerCall — Free Anonymous Video Calls</title>
+  <meta name="description" content="Start a free, anonymous peer-to-peer video call with anyone. No accounts, no downloads. Just share a code and connect.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- VIEW 1: Home -->
+  <div id="home-view" class="view active">
+    <div class="home-container">
+      <!-- Animated background orbs -->
+      <div class="bg-orb orb-1"></div>
+      <div class="bg-orb orb-2"></div>
+      <div class="bg-orb orb-3"></div>
+
+      <div class="hero">
+        <div class="logo">
+          <svg class="logo-icon" viewBox="0 0 48 48" width="48" height="48">
+            <circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+            <path d="M17 19.5v9a1.5 1.5 0 001.5 1.5h12a1.5 1.5 0 001.5-1.5v-9a1.5 1.5 0 00-1.5-1.5h-12a1.5 1.5 0 00-1.5 1.5z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M32 22l4-2.5v9L32 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h1 class="logo-text">PeerCall</h1>
+        </div>
+        <p class="tagline">Free, anonymous video calls. No accounts. No downloads.<br>Just share a code and connect.</p>
+      </div>
+
+      <div class="action-cards">
+        <!-- Start Call Card -->
+        <div class="card glass-card" id="start-card">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M15.05 5A5 5 0 0119 8.95M15.05 1A9 9 0 0123 8.94m-1 7.98v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h2>Start a Call</h2>
+          <p>Generate a unique code and share it with someone to connect</p>
+          <button id="btn-create" class="btn btn-primary">Start a Call</button>
+        </div>
+
+        <!-- Join Call Card -->
+        <div class="card glass-card" id="join-card">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h2>Join a Call</h2>
+          <p>Enter the 6-character code shared with you</p>
+          <div class="code-input-group">
+            <input type="text" id="input-code" class="input-code" maxlength="6" placeholder="ENTER CODE" autocomplete="off" spellcheck="false">
+            <button id="btn-join" class="btn btn-secondary">Join</button>
+          </div>
+        </div>
+      </div>
+
+      <footer class="home-footer">
+        <p>Peer-to-peer encrypted • No data stored • <a href="https://github.com" target="_blank">Open Source</a></p>
+      </footer>
+    </div>
+  </div>
+
+  <!-- VIEW 2: Waiting Room -->
+  <div id="waiting-view" class="view">
+    <div class="waiting-container">
+      <!-- Creator waiting state -->
+      <div id="creator-waiting" class="waiting-state" style="display:none">
+        <div class="pulse-container">
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring"></div>
+          <div class="waiting-icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+        </div>
+        <h2>Waiting for someone to join...</h2>
+        <p class="subtle">Share this code with the person you want to call</p>
+        <div class="code-display">
+          <span id="display-code" class="code-display-text"></span>
+          <button id="btn-copy" class="btn-icon" title="Copy code">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+          </button>
+        </div>
+        <p class="subtle">Room expires in 10 minutes if nobody joins</p>
+      </div>
+
+      <!-- Join request prompt (shown to creator) -->
+      <div id="join-prompt" class="join-prompt">
+        <div class="prompt-card glass-card">
+          <div class="prompt-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <h2>Someone wants to join!</h2>
+          <p>A user is requesting to join your call</p>
+          <div class="prompt-countdown">
+            <span id="countdown-timer">30</span>
+          </div>
+          <div class="prompt-actions">
+            <button id="btn-allow" class="btn btn-primary">Allow</button>
+            <button id="btn-deny" class="btn btn-danger">Deny</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Joiner waiting state -->
+      <div id="joiner-waiting" class="waiting-state" style="display:none">
+        <div class="pulse-container">
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring"></div>
+          <div class="waiting-icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+        </div>
+        <h2>Waiting for approval...</h2>
+        <p class="subtle">The call creator will approve your request</p>
+        <div class="join-countdown">
+          <span>Request expires in </span><span id="join-countdown-timer">30</span><span>s</span>
+        </div>
+      </div>
+
+      <button id="btn-cancel-wait" class="btn btn-ghost">Cancel</button>
+    </div>
+  </div>
+
+  <!-- VIEW 3: Call Screen -->
+  <div id="call-view" class="view">
+    <div class="call-container">
+      <!-- Connection status bar -->
+      <div id="connection-status" class="connection-status">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-text" class="status-text">Connecting...</span>
+      </div>
+
+      <!-- Video grid -->
+      <div class="video-grid">
+        <div class="video-wrapper" id="remote-video-wrapper">
+          <video id="remote-video" autoplay playsinline></video>
+          <div class="video-placeholder" id="remote-placeholder">
+            <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span>Peer</span>
+          </div>
+          <span class="video-label">Peer</span>
+        </div>
+        <div class="video-wrapper video-self" id="local-video-wrapper">
+          <video id="local-video" autoplay playsinline muted></video>
+          <div class="video-placeholder" id="local-placeholder" style="display:none">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span>You</span>
+          </div>
+          <span class="video-label">You</span>
+        </div>
+      </div>
+
+      <!-- Control bar -->
+      <div class="control-bar">
+        <button id="btn-toggle-mic" class="control-btn" title="Toggle microphone">
+          <svg id="mic-on-icon" class="icon-mic-on" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+          <svg id="mic-off-icon" class="icon-mic-off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <line x1="1" y1="1" x2="23" y2="23"/>
+            <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/>
+            <path d="M17 16.95A7 7 0 015 12v-2m14 0v2c0 .67-.1 1.32-.27 1.93"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+          <span class="control-label">Mic</span>
+        </button>
+
+        <button id="btn-toggle-cam" class="control-btn" title="Toggle camera">
+          <svg id="cam-on-icon" class="icon-cam-on" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 7l-7 5 7 5V7z"/>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+          </svg>
+          <svg id="cam-off-icon" class="icon-cam-off" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <line x1="1" y1="1" x2="23" y2="23"/>
+            <path d="M21 21H3a2 2 0 01-2-2V8a2 2 0 012-2h3m3-3h6l2 3h4a2 2 0 012 2v9.34m-7.72-2.06a4 4 0 11-5.56-5.56"/>
+          </svg>
+          <span class="control-label">Camera</span>
+        </button>
+
+        <button id="btn-end-call" class="control-btn control-btn-end" title="End call">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="control-label">End</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Permission denied overlay -->
+  <div id="permission-overlay" class="overlay">
+    <div class="overlay-card glass-card">
+      <div class="overlay-icon">
+        <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#ef4444" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <h2>Camera & Microphone Access Required</h2>
+      <p>PeerCall needs access to your camera and microphone to make video calls. Please allow access in your browser settings and try again.</p>
+      <button id="btn-retry-permissions" class="btn btn-primary">Try Again</button>
+      <button id="btn-cancel-permissions" class="btn btn-ghost">Go Back</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
